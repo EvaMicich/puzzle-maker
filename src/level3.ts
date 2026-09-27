@@ -1,4 +1,6 @@
 import Phaser from 'phaser';
+import { sfx } from './sound';
+import { selectedCharacter, drawBanana, type Character } from './character';
 import { awardTrophy, hasTrophy } from './trophies';
 
 const INK = 0x51483f;
@@ -10,33 +12,12 @@ export type BossState = {
   treeIndex: number; spinPasses: number; swoops: number;
   trophyCollected: boolean; completed: boolean;
 };
-let audio: AudioContext | undefined;
-
-function sound(kind: 'swing' | 'hit' | 'hurt' | 'fire' | 'win') {
-  if (document.querySelector('#sound')?.getAttribute('aria-pressed') !== 'true') return;
-  try {
-    audio ??= new AudioContext(); void audio.resume();
-    const t = audio.currentTime, oscillator = audio.createOscillator(), gain = audio.createGain();
-    const frequency = { swing: 190, hit: 330, hurt: 130, fire: 85, win: 520 }[kind];
-    oscillator.type = kind === 'fire' ? 'sawtooth' : 'triangle';
-    oscillator.frequency.setValueAtTime(frequency, t);
-    oscillator.frequency.exponentialRampToValueAtTime(kind === 'win' ? 850 : 45, t + .18);
-    gain.gain.setValueAtTime(.055, t); gain.gain.exponentialRampToValueAtTime(.001, t + .22);
-    oscillator.connect(gain); gain.connect(audio.destination); oscillator.start(t); oscillator.stop(t + .23);
-  } catch { /* Sound is optional. */ }
-}
-
 function page(level: string, controls: string) {
   document.querySelector('h1 small')!.textContent = level;
   document.title = `Puzzle Maker — ${level}`;
   document.querySelector('footer')!.innerHTML = controls;
   document.querySelector('#game')!.setAttribute('aria-label', `Puzzle Maker. ${level}. ${controls.replace(/<[^>]*>/g, '')}`);
-  const button = document.querySelector<HTMLButtonElement>('#sound')!;
-  button.onclick = () => {
-    const on = button.getAttribute('aria-pressed') !== 'true';
-    button.setAttribute('aria-pressed', String(on)); button.textContent = on ? 'Sound on' : 'Sound off';
-    sound('hit');
-  };
+
 }
 
 function label(scene: Phaser.Scene, x: number, y: number, text: string, size = 18) {
@@ -68,8 +49,9 @@ function battleAxe(g: Phaser.GameObjects.Graphics, x: number, y: number, angle: 
   g.fillStyle(0xd4b158); g.fillCircle(0, -23, 4); g.restore();
 }
 
-function sneeker(g: Phaser.GameObjects.Graphics, x: number, y: number, face: number, stride: number, axe = false, swing = 0) {
+function sneeker(g: Phaser.GameObjects.Graphics, x: number, y: number, face: number, stride: number, axe = false, swing = 0, character: Character = 'sneaker') {
   g.save(); g.translateCanvas(x, y);
+  if (character === 'banana') { drawBanana(g, stride); } else {
   g.lineStyle(7, 0x838786); g.lineBetween(-4, 6, -7 - stride, 16); g.lineBetween(4, 6, 7 + stride, 16);
   wood(g, -7, -12, 14, 20, 0x858b88);
   g.lineStyle(5, 0x858b88); g.lineBetween(-7, -8, -15, -5); g.lineBetween(7, -8, 15, -5);
@@ -79,6 +61,7 @@ function sneeker(g: Phaser.GameObjects.Graphics, x: number, y: number, face: num
   g.strokePoints([{ x: -11, y: -23 }, { x: -6, y: -25 }, { x: -2, y: -21 }, { x: 3, y: -25 }, { x: 7, y: -22 }, { x: 11, y: -24 }]);
   g.lineBetween(-6, -28, -6, -25); g.lineBetween(6, -28, 6, -25); g.lineBetween(-3, -16, 3, -16);
   g.fillStyle(0xc68e67); g.fillRect(-8, 3, 16, 4); g.lineStyle(1, INK); g.strokeRect(-3, 2, 6, 6);
+  }
   if (axe) battleAxe(g, face * 23, -9, face * (swing > 0 ? -1.1 + (1 - swing / .28) * 2.8 : .3));
   g.restore();
 }
@@ -112,6 +95,8 @@ export class Level3 extends Phaser.Scene {
   constructor() { super('level3'); }
 
   create(data: { elapsed?: number } = {}) {
+    this.events.once('shutdown', () => sfx.stopAll());
+    sfx.play('ignite');
     this.state = { dragonHP: 300, phase: 1, hearts: 20, attack: 'tree', treeIndex: 0, spinPasses: 0, swoops: 0, trophyCollected: false, completed: false };
     this.p = { x: 300, y: 564, vx: 0, vy: 0, ground: true, face: 1 };
     this.dragon = { x: 820, y: 365, angle: 0, scale: 1 };
@@ -125,7 +110,7 @@ export class Level3 extends Phaser.Scene {
     this.phaseText = label(this, 600, 96, '', 19).setOrigin(.5).setDepth(6);
     this.hint = label(this, 600, 728, '', 15).setOrigin(.5).setDepth(6);
     label(this, 32, 21, '03 / FINAL BOSS', 15);
-    label(this, 32, 106, 'Sneeker', 12);
+    label(this, 32, 106, selectedCharacter(this) === 'banana' ? 'Banana Man' : 'Sneaker', 12);
     this.world.fillStyle(0xfff9e9, .48); this.world.fillRoundedRect(16, 145, 1168, 555, 8);
     page('Level 3 — Final Boss', '<span><b>A D / ← →</b> run · <b>Space</b> jump · <b>F</b> battle axe</span><span><b>R</b> restart boss · <b>Levels</b> choose a level</span>');
     this.draw();
@@ -135,7 +120,10 @@ export class Level3 extends Phaser.Scene {
     this.state.attack = attack; this.attackTime = 0; this.attackDuration = duration;
     this.passHit = false; this.lowHit = false;
     if (attack === 'fire-warning') this.fireX = Phaser.Math.Clamp(this.p.x, 260, 940);
-    if (attack === 'fire') sound('fire');
+    if (attack === 'fire') sfx.play('fire');
+    if (attack === 'spin-warning') sfx.play('spin');
+    if (attack === 'swoop') sfx.play('swoop');
+    if (attack === 'flight' || attack === 'defeated') sfx.stopAll();
     if (attack === 'spin-warning') {
       const left = this.state.spinPasses % 2 === 0;
       this.passStart = { x: left ? 270 : 930, y: 300 };
@@ -159,14 +147,14 @@ export class Level3 extends Phaser.Scene {
 
   axeAttack() {
     if (this.cooldown > 0 || this.state.dragonHP === 0) return;
-    this.cooldown = .55; this.swing = .28; sound('swing');
+    this.cooldown = .55; this.swing = .28;
     const a = this.state.attack;
     const vulnerable = a === 'tree' || a === 'final-tree' || a === 'vulnerable' || (a === 'low' && !this.lowHit);
     const point = this.weakPoint(), dx = point.x - this.p.x;
     if (!vulnerable || Math.abs(dx) > 65 || Math.abs(point.y - this.p.y) > 90 || dx * this.p.face < -18) return;
     // Damage is registered once here, never every frame of a swing.
-    this.state.dragonHP -= 20; this.flash = .3; sound('hit');
-    if (this.state.dragonHP === 0) { this.setAttack('defeated'); sound('win'); return; }
+    this.state.dragonHP -= 20; this.flash = .3; if(this.state.dragonHP>0)sfx.play('roar');
+    if (this.state.dragonHP === 0) { this.setAttack('defeated'); sfx.play('defeat'); return; }
     if (this.state.dragonHP === 200) {
       this.state.phase = 2; this.dragon.scale = 1; this.dragon.angle = 0;
       this.setAttack('fire-warning', 1.7); return;
@@ -183,7 +171,7 @@ export class Level3 extends Phaser.Scene {
 
   damage(units: number): boolean {
     if (this.invulnerable > 0 || this.state.hearts <= 0) return false;
-    this.state.hearts = Math.max(0, this.state.hearts - units); this.invulnerable = 1.15; sound('hurt');
+    this.state.hearts = Math.max(0, this.state.hearts - units); this.invulnerable = 1.15;
     if (this.state.hearts === 0) this.scene.start('levels', { elapsed: this.elapsed, defeated: true });
     return true;
   }
@@ -262,13 +250,13 @@ export class Level3 extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(k.SPACE) && p.ground) { p.vy = -430; p.ground = false; }
     const oldY = p.y;
     p.vy += 980 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.ground = false;
-    if (p.vy >= 0 && oldY + 16 <= 584 && p.y + 16 >= 580 && p.x >= 182 && p.x <= 1018) { p.y = 564; p.vy = 0; p.ground = true; }
+    if (p.vy >= 0 && oldY + 16 <= 584 && p.y + 16 >= 580 && p.x >= 182 && p.x <= 1018) { if(p.vy>60)sfx.play('land'); p.y = 564; p.vy = 0; p.ground = true; }
     if (p.y > 620 || p.x < 25 || p.x > 1175) this.lava();
     if (this.state.hearts === 0) return;
     if (Phaser.Input.Keyboard.JustDown(k.F)) this.axeAttack();
     this.bossUpdate(dt);
     if (this.state.attack === 'defeated' && this.attackTime > 1.2 && Math.abs(p.x - 600) < 32 && Math.abs(p.y - 564) < 44) {
-      this.state.trophyCollected = true; this.state.completed = true; awardTrophy(this, 3); sound('win');
+      this.state.trophyCollected = true; this.state.completed = true; awardTrophy(this, 3);
       this.scene.start('ending', { elapsed: this.elapsed }); return;
     }
     this.draw();
@@ -356,7 +344,7 @@ export class Level3 extends Phaser.Scene {
         this.drawDragon(g);
       } else trophy(g, 600, 575);
     }
-    if (this.invulnerable === 0 || Math.floor(this.elapsed * 12) % 2 === 0) sneeker(g, this.p.x, this.p.y, this.p.face, this.p.ground ? Math.sin(this.elapsed * 15) * Math.min(3, Math.abs(this.p.vx) / 80) : 2, true, this.swing);
+    if (this.invulnerable === 0 || Math.floor(this.elapsed * 12) % 2 === 0) sneeker(g, this.p.x, this.p.y, this.p.face, this.p.ground ? Math.sin(this.elapsed * 15) * Math.min(3, Math.abs(this.p.vx) / 80) : 2, true, this.swing, selectedCharacter(this));
     this.drawHUD();
   }
 
@@ -402,6 +390,8 @@ export class ChooseLevel extends Phaser.Scene {
     page('Choose a Level', '<span>Three levels. Owen’s complete game.</span><span>Choose a level to play again.</span>');
     label(this, 600, 170, 'CHOOSE A LEVEL', 36).setOrigin(.5);
     label(this, 600, 225, data.defeated ? 'Out of hearts. Pick any level and try again.' : 'Puzzle Maker · Made by Owen', 18).setOrigin(.5);
+    const newGame = label(this, 600, 600, 'New game · choose a character', 18).setOrigin(.5).setPadding(12).setInteractive({ useHandCursor: true });
+    newGame.on('pointerdown', () => this.scene.start('characters'));
     ['Targets & platforms', 'The loop tree', 'The final dragon'].forEach((name, i) => {
       const button = label(this, 600, 315 + i * 85, `Level ${i + 1} — ${name}`, 23).setOrigin(.5)
         .setPadding(25, 14).setBackgroundColor('#e1d9c5').setInteractive({ useHandCursor: true });
@@ -433,7 +423,7 @@ export class Ending extends Phaser.Scene {
       label(this, x, 420, `#${i}`, 23).setOrigin(.5);
       if (!earned) label(this, x, 487, `Find in Level ${i}`, 12).setOrigin(.5);
     }
-    sneeker(g, 600, 558, 1, 0);
+    sneeker(g, 600, 558, 1, 0, false, 0, selectedCharacter(this));
     const replay = label(this, 600, 653, 'Choose a Level', 23).setOrigin(.5).setPadding(22, 12)
       .setBackgroundColor('#e1d9c5').setInteractive({ useHandCursor: true });
     replay.on('pointerdown', () => this.scene.start('levels', { elapsed: this.elapsed }));

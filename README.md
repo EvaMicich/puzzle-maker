@@ -6,7 +6,11 @@ A small TypeScript / Phaser 3 / Vite game. All artwork is drawn with Phaser Grap
 
 From this folder, run `npm run dev`, then open http://127.0.0.1:5173. Dependencies are already installed; on a fresh checkout, run `npm install` once first.
 
-Use A/D or left/right arrows to walk, W/S or up/down arrows on ladders, Space to jump, F to shoot with target aim assistance, and hold G near a bottom platform to grapple toward it. Clicking aims and fires manually. R restarts the whole level. Enable sound with the top-right button.
+The opening screen lets you choose **SNEAKER** or **BANANA MAN**. Click either character, or use left/right (A/D) and Enter/Space. Both have identical movement, collisions, tools, health, and damage. Banana Man is drawn from Owen's reference with a tall yellow body, brown mark, round smiling face, and orange-red arms and legs. His legs animate and his whole body rotates on the loop. No image assets are used.
+
+Your character remains selected through all three levels, retries, level selection, and the final room. **Levels → New game · choose a character** starts a fresh playthrough and clears earned trophies once you choose. Selection lasts for the current page session; reloading the normal game URL shows selection again. Direct development links (`?level=1`, `?level=2`, `?level=3`, `?level=menu`) bypass selection and default to Sneaker.
+
+Use A/D or left/right arrows to walk, W/S or up/down arrows on ladders, Space to jump, F to shoot with target aim assistance, and hold G near a bottom platform to grapple toward it. Clicking aims and fires manually. R restarts the whole level. Sound defaults to ON after your first click/key; the top-right button mutes all effects.
 
 Shoot all six targets, descend on the right, cross left through downward arrows to collect the trophy, then return right along the safe corridor and descend again. Follow orange → yellow → spinning green → blue → green slime on purple → finish. Arrow hits preserve progress. Falling from platforms returns to the bottom ladder. The finish now takes Sneeker directly into Level 2.
 
@@ -42,13 +46,26 @@ Direct development links: http://127.0.0.1:5173/?level=3 for the boss, or http:/
 - `npm run build` — check and produce one production build in `dist`.
 - `npm run preview` — serve the production build.
 - `.browser-smoke.mjs` — dependency-free browser regression checks, using Node's WebSocket and an already installed Chromium browser with remote debugging on port 9222. With Vite running on port 5173, run `node .browser-smoke.mjs`. It exercises all three levels, retries, tools, loop rotation, branch timers, exact boss damage, half-hearts, dodges, distinct spin hits, selection buttons, collected trophies, ending credits, direct launch, and native keyboard input. It generates no screenshots or videos. The test browser closes after a successful run.
+- Add `--banana` to run the full route with Banana Man; the default checks Sneaker. `--keep-open` retains the test browser for another run. Both routes check character selection, retention and New Game as well as the existing gameplay.
 
 ## Small playability adjustments
 
-The entire drawing fits one view. Six targets keep the drawing's paired left/middle and single right positions. Platform spacing is adjusted for jumps; the green square rotates beneath a stable landing edge. The yellow ladder sits on its right edge. The right ladder has two separately unlocked segments. Bow aim assistance and a simple hold-to-pull grapple make keyboard play approachable. The character retains the orange head/hands, zigzag face band, belt, and corrected grey body. The background takes three minutes for a gentle full colour cycle. Sound is original synthesized audio and starts muted.
+The entire drawing fits one view. Six targets keep the drawing's paired left/middle and single right positions. Platform spacing is adjusted for jumps; the green square rotates beneath a stable landing edge. The yellow ladder sits on its right edge. The right ladder has two separately unlocked segments. Bow aim assistance and a simple hold-to-pull grapple make keyboard play approachable. The character retains the orange head/hands, zigzag face band, belt, and corrected grey body. The background takes three minutes for a gentle full colour cycle.
 
 Game state and movement live in `src/main.ts`; page styling lives in `src/style.css`. `node_modules`, Vite's cache, and `dist` are ignored. Source maps are not enabled. The reference photographs are not copied into the project.
 
 Level 2 is isolated in `src/level2.ts`; Level 1 changes only register the scene, update the page's level-specific controls, and replace its old placeholder with the scene transition. The outdoor layout is compressed to fit the existing view, with branch heights adjusted to remain jumpable. The loop uses a safe oval path with a short guided exit into the hole. The right-hand hollow-tree sketch is shown as an overview before the camera enters the full-height interior. Interior floor barriers span the passage; the trophy branch waits for collection before it can be chopped, avoiding an accidental missed trophy. Two branches are unstable, and their collapse lands on the next barrier safely. No dependencies or downloaded assets were added for Level 2.
 
 Level 3 and its small menu/end scenes live in `src/level3.ts`; `src/trophies.ts` only tracks session awards. No prior movement or level mechanics were rewritten for the boss. The arena is a single island because the reference specifies a boss design rather than a detailed arena layout. Two swoops and one hit per low opening ensure both aerial behavior and the final tree disguise are seen; missed swoop hits remain available at the final tree. All sound remains synthesized and optional. No dependencies or downloaded assets were added.
+
+`src/character.ts` contains only character selection and procedural artwork. Existing scenes switch the body drawing and keep their original transforms, tool drawings, and gameplay. This cosmetic addition introduces no dependencies or character-specific physics.
+
+## Owen's sound effects
+
+`src/sound.ts` provides one reusable Web Audio context, a shared in-memory noise buffer, pitch sweeps, filtered noise, gain envelopes, master gain and compression. Sound is enabled after browser interaction and can be muted globally. Short-lived nodes disconnect on completion; changing levels stops pending effects. There are no audio files or dependencies.
+
+Landings pop (jump takeoff is silent), bow shots whoosh, targets ding, and falling arrows clang at the floor. Clangs and wooden ladder steps are rate-limited. Grapple attachment is immediate in the existing game, so its fwip is followed by a clink 75 ms later. Slime boings; chopping a branch gives a stronger woody whack. The boss begins with ignition, breathes noisy fire, roars on confirmed damage, builds a capped energy sound during each spin pass, and whooshes on swoops. The finishing hit uses one longer roar rather than stacking two roars.
+
+All three trophy pickups, the gravity loop, player damage, and the win room are silent. No continuous lava ambience, background music, or victory music is included. Gameplay timings, collision rules and balance are unchanged.
+
+With the same test browser on port 9222, `node .audio-smoke.mjs` verifies real Web Audio startup, cleanup, mute, limiting, and the scene events/silent moments. It leaves the browser open for gameplay checks. No recordings or other media are generated.

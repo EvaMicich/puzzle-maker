@@ -1,15 +1,29 @@
 // Uses Node's built-in WebSocket and an installed browser; no testing dependency.
 const tabs=await (await fetch('http://127.0.0.1:9222/json')).json();
-const ws=new WebSocket(tabs[0].webSocketDebuggerUrl);await new Promise(r=>ws.addEventListener('open',r,{once:true}));
+const ws=new WebSocket(tabs.find(t=>t.type==='page'&&!t.url.startsWith('chrome-extension:')).webSocketDebuggerUrl);await new Promise(r=>ws.addEventListener('open',r,{once:true}));
 let seq=0;const pending=new Map(),errors=[];
 ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.id){pending.get(m.id)?.(m);pending.delete(m.id);}if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails);});
 const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,m=>m.error?reject(m.error):resolve(m.result));ws.send(JSON.stringify({id,method,params}));});
 if(process.argv.includes('--close')){await send('Browser.close');ws.close();process.exit(0);}
 await send('Runtime.enable');await send('Page.enable');await send('Page.navigate',{url:'http://127.0.0.1:5173'});
 await new Promise(r=>setTimeout(r,5000));
+for(let attempt=0;attempt<30;attempt++){
+  const ready=await send('Runtime.evaluate',{returnByValue:true,expression:'!!window.puzzleMaker?.scene?.isActive("characters")'});
+  if(ready.result?.value)break;
+  await new Promise(r=>setTimeout(r,250));
+}
 const result=await send('Runtime.evaluate',{returnByValue:true,expression:`(()=>{
-const game=window.puzzleMaker;if(!game)throw Error('Game did not boot');const s=game.scene.getScene('level');game.loop.sleep();
+const game=window.puzzleMaker;if(!game)throw Error('Game did not boot');game.loop.sleep();
 const checks=[];const assert=(ok,msg)=>{if(!ok)throw Error(msg);checks.push(msg)};
+const character=${JSON.stringify(process.argv.includes('--banana') ? 'banana' : 'sneaker')};
+assert(game.scene.isActive('characters')&&!game.scene.isActive('level'),'New game opens character selection before Level 1');
+const picker=game.scene.getScene('characters');
+assert(picker.children.list.some(c=>c.text==='SNEAKER')&&picker.children.list.some(c=>c.text==='BANANA MAN'),'Both named character previews are available');
+if(character==='banana')picker.children.getByName('banana').emit('pointerdown');
+else {picker.keys.ENTER._justDown=true;picker.update(0,16)}
+game.scene.processQueue();
+assert(game.registry.get('character')===character&&game.scene.isActive('level'),'Mouse or keyboard selection starts Level 1');
+const s=game.scene.getScene('level');
 const tick=(n=1)=>{for(let i=0;i<n;i++)s.update(0,1000/60)};
 const key=(name,value)=>s.keys[name].isDown=value;
 assert(s.targets.length===6,'Six reference targets');tick();
@@ -33,6 +47,7 @@ s.keys.SPACE._justDown=true;key('A',true);let limit=100;while(s.p.x>257&&limit--
 game.scene.processQueue();
 const tree=game.scene.getScene('level2');
 assert(game.scene.isActive('level2'),'Level 1 finish starts Level 2');
+assert(game.registry.get('character')===character,'Character remains selected in Level 2');
 assert(tree.state.attemptsRemaining===5&&!tree.state.axeCollected,'Level 2 starts with five attempts and no axe');
 assert(document.querySelector('footer').textContent.includes('axe')&&!document.querySelector('footer').textContent.includes('bow'),'Level 2 controls replace bow with axe');
 const step=(n=1)=>{for(let i=0;i<n;i++)tree.update(0,1000/60)};
@@ -54,6 +69,7 @@ for(let i=1;i<9;i++)jumpBranch(i);
 assert(tree.mode==='loop'&&tree.state.inLoop,'Top branch enters attached loop mode');
 held('D',true);step(198);held('D',false);
 assert(Math.abs(tree.p.rotation-Math.PI)<.05,'Sneeker rotates completely upside down');
+assert(game.registry.get('character')===character,'Selected character follows the loop rotation');
 const upsideY=tree.p.y,angle=tree.loopAngle;step(120);
 assert(tree.p.y===upsideY&&tree.loopAngle===angle&&tree.state.attemptsRemaining===5,'Stopping upside down cannot cause a fall');
 held('A',true);step(15);held('A',false);assert(tree.loopAngle<angle,'Loop supports reverse movement');
@@ -78,6 +94,7 @@ tree.keys.F._justDown=true;step(75);assert(tree.state.completed&&!tree.state.axe
 game.scene.processQueue();
 const boss=game.scene.getScene('level3');
 assert(game.scene.isActive('level3'),'Level 2 finish starts final boss');
+assert(game.registry.get('character')===character,'Character remains selected in Level 3');
 assert(boss.state.dragonHP===300&&boss.state.hearts===20&&boss.state.phase===1,'Boss starts with 300 HP and ten full hearts');
 assert(!boss.keys.G&&!document.querySelector('footer').textContent.includes('bow'),'No bow or grapple in boss arena');
 const btick=(n=1)=>{for(let i=0;i<n;i++)boss.update(0,1000/60)};
@@ -134,12 +151,14 @@ bwalk(600);game.scene.processQueue();assert(boss.state.trophyCollected&&boss.sta
 const ending=game.scene.getScene('ending');
 assert([1,2,3].every(n=>game.registry.get('trophies').includes(n)),'Full run preserves all three earned trophies');
 assert(['#1','#2','#3','YOU WIN','Made by Owen'].every(t=>ending.children.list.some(c=>c.text===t)),'Square trophy room labels all trophies and credits Owen');
+assert(game.registry.get('character')===character,'Ending uses the selected character');
 ending.children.list.find(c=>c.text==='Choose a Level').emit('pointerdown');game.scene.processQueue();
 assert(game.scene.isActive('levels'),'Ending replay opens Choose a Level');
 function choose(n){const menu=game.scene.getScene('levels');menu.children.list.find(c=>c.text?.startsWith('Level '+n+' —')).emit('pointerdown');game.scene.processQueue();}
 choose(3);assert(game.scene.isActive('level3')&&boss.state.hearts===20&&boss.state.dragonHP===300&&boss.state.spinPasses===0&&!boss.state.trophyCollected,'Level 3 menu button resets entire boss');
 boss.state.hearts=1;boss.damage(1);game.scene.processQueue();assert(game.scene.isActive('levels')&&!game.scene.isActive('level3'),'Zero hearts opens level selection without automatic restart');
 choose(1);assert(game.scene.isActive('level')&&s.state.targetsHit===0&&!s.state.trophyCollected,'Level 1 menu button initializes Level 1');
+assert(game.registry.get('character')===character,'Defeat and level selection retain character');
 document.querySelector('#levels').click();game.scene.processQueue();choose(2);
 assert(game.scene.isActive('level2')&&tree.state.checkpoint===0&&!tree.state.axeCollected,'Level 2 menu button initializes Level 2');
 tree.keys.R._justDown=true;step();game.scene.processQueue();
@@ -153,8 +172,16 @@ for(let i=0;i<4;i++){tree.p.y=790;step();game.scene.processQueue()}
 assert(tree.state.attemptsRemaining===5&&tree.state.checkpoint===0&&!tree.state.enteredTree&&game.scene.isActive('level2'),'Fifth failed attempt restarts Level 2, never Level 1');
 tree.scene.start('level');game.scene.processQueue();assert(game.scene.isActive('level')&&s.targets.length===6&&!s.state.completed,'Returning to Level 1 restores fresh target game');
 s.keys.F.isDown=true;tick(30);s.keys.F.isDown=false;assert(s.state.targetsHit>0,'Level 1 bow still works after Level 2');
+document.querySelector('#levels').click();game.scene.processQueue();
+game.scene.getScene('levels').children.list.find(c=>c.text==='New game · choose a character').emit('pointerdown');game.scene.processQueue();
+assert(game.scene.isActive('characters'),'Explicit new game returns to character selection');
+const again=game.scene.getScene('characters');again.keys.RIGHT._justDown=true;again.update(0,16);assert(again.choice==='banana','Right arrow selects Banana Man');
+again.keys.LEFT._justDown=true;again.update(0,16);assert(again.choice==='sneaker','Left arrow selects Sneaker');
+again.keys.SPACE._justDown=true;again.update(0,16);game.scene.processQueue();
+assert(game.registry.get('character')==='sneaker'&&game.registry.get('trophies').length===0,'New game starts fresh with chosen character');
 return {checks,canvas:!!document.querySelector('canvas')};})()`});
 console.log(JSON.stringify({result,errors},null,2));
+if(result.exceptionDetails)console.log(JSON.stringify(await send('Runtime.evaluate',{returnByValue:true,expression:'({url:location.href,body:document.body.innerText,resources:performance.getEntriesByType("resource").map(r=>({name:r.name,status:r.responseStatus}))})'})));
 if(!result.exceptionDetails){
   await send('Page.navigate',{url:'http://127.0.0.1:5173/?level=2'});
   await new Promise(r=>setTimeout(r,1500));
@@ -186,5 +213,5 @@ if(!result.exceptionDetails){
   console.log(JSON.stringify({finalChecks,errors}));
   if(finalChecks.exceptionDetails)process.exitCode=1;
 }
-if(!result.exceptionDetails&&!errors.length)await send('Browser.close');ws.close();
+if(!process.argv.includes('--keep-open')&&!result.exceptionDetails&&!errors.length)await send('Browser.close');ws.close();
 if(errors.length||result.exceptionDetails)process.exitCode=1;

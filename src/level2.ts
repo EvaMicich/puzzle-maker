@@ -1,4 +1,6 @@
 import Phaser from 'phaser';
+import { sfx } from './sound';
+import { selectedCharacter, drawBanana } from './character';
 import { awardTrophy } from './trophies';
 
 const INK = 0x51483f;
@@ -42,12 +44,12 @@ export class Level2 extends Phaser.Scene {
   swing = 0;
   feedback = 0;
   chips: { x: number; y: number; vx: number; vy: number; life: number }[] = [];
-  audio?: AudioContext;
-  soundEnabled = false;
+
+
 
   constructor() { super('level2'); }
 
-  create(data: { elapsed?: number; soundEnabled?: boolean } = {}) {
+  create(data: { elapsed?: number } = {}) {
     this.state = {
       checkpoint: 0, attemptsRemaining: 5, inLoop: false, enteredTree: false,
       axeCollected: false, destroyedBranches: [], trophyCollected: false, completed: false,
@@ -55,7 +57,7 @@ export class Level2 extends Phaser.Scene {
     this.mode = 'outside';
     this.p = { x: 85, y: 684, vx: 0, vy: 0, ground: true, face: 1, rotation: 0 };
     this.elapsed = data.elapsed ?? 0;
-    this.soundEnabled = data.soundEnabled ?? document.querySelector('#sound')?.getAttribute('aria-pressed') === 'true';
+    this.events.once('shutdown', () => sfx.stopAll());
     this.standing = 0; this.coyote = 0; this.jumpBuffer = 0; this.launchRemaining = 0;
     this.loopAngle = 0; this.holeTime = 0; this.swing = 0; this.feedback = 0;
     this.hook = undefined; this.chips = [];
@@ -96,13 +98,6 @@ export class Level2 extends Phaser.Scene {
     document.title = 'Puzzle Maker — Owen’s Level 2';
     document.querySelector('footer')!.innerHTML = '<span><b>A D / ← →</b> move · <b>W S / ↑ ↓</b> loop · <b>Space</b> jump / slime · <b>F</b> axe · <b>G</b> hold to grapple</span><span><b>R</b> restart Level 2</span>';
     document.querySelector('#game')!.setAttribute('aria-label', 'Puzzle Maker Level 2. Arrows or WASD to move, Space to jump or use slime, G to grapple, F to chop with the axe.');
-    const soundButton = document.querySelector<HTMLButtonElement>('#sound')!;
-    const refreshSound = () => {
-      soundButton.textContent = this.soundEnabled ? 'Sound on' : 'Sound off';
-      soundButton.setAttribute('aria-pressed', String(this.soundEnabled));
-    };
-    refreshSound();
-    soundButton.onclick = () => { this.soundEnabled = !this.soundEnabled; refreshSound(); this.tone('pickup'); };
     this.cameras.main.setScroll(0, 0);
     this.drawWorld(); this.message(); this.drawMoving(0);
   }
@@ -188,29 +183,10 @@ export class Level2 extends Phaser.Scene {
       : 'Pick up the axe on your left. Then F to chop the branch beneath your feet.');
   }
 
-  tone(kind: 'chop' | 'slime' | 'pickup') {
-    if (!this.soundEnabled) return;
-    try {
-      this.audio ??= new AudioContext(); void this.audio.resume();
-      const a = this.audio, t = a.currentTime, o = a.createOscillator(), v = a.createGain();
-      o.type = kind === 'chop' ? 'triangle' : 'sine';
-      o.frequency.setValueAtTime(kind === 'chop' ? 180 : 280, t);
-      o.frequency.exponentialRampToValueAtTime(kind === 'chop' ? 45 : 700, t + .12);
-      v.gain.setValueAtTime(.09, t); v.gain.exponentialRampToValueAtTime(.001, t + .18);
-      o.connect(v); v.connect(a.destination); o.start(t); o.stop(t + .19);
-      if (kind === 'chop') {
-        const buffer = a.createBuffer(1, Math.floor(a.sampleRate * .07), a.sampleRate);
-        const samples = buffer.getChannelData(0);
-        for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() * 2 - 1) * (1 - i / samples.length) * .18;
-        const noise = a.createBufferSource(); noise.buffer = buffer; noise.connect(a.destination); noise.start(t);
-      }
-    } catch { /* Audio is optional. */ }
-  }
-
   fail() {
     this.state.attemptsRemaining--;
     if (this.state.attemptsRemaining === 0) {
-      this.scene.restart({ elapsed: this.elapsed, soundEnabled: this.soundEnabled });
+      this.scene.restart({ elapsed: this.elapsed });
       return;
     }
     const b = this.state.enteredTree ? this.barriers[this.state.checkpoint] : this.branches[this.state.checkpoint];
@@ -231,7 +207,7 @@ export class Level2 extends Phaser.Scene {
       const flight = (-vy + Math.sqrt(vy * vy + 2 * GRAVITY * height)) / GRAVITY;
       this.p.vx = (next.x + next.w / 2 - this.p.x) / flight;
       this.p.vy = vy; this.launchRemaining = flight;
-      this.tone('slime');
+      sfx.play('boing');
     } else { this.p.vy = -430; }
     this.p.ground = false; this.jumpBuffer = 0; this.coyote = 0;
   }
@@ -243,12 +219,12 @@ export class Level2 extends Phaser.Scene {
     if (this.standing === 5 && !this.state.trophyCollected) {
       this.message('The trophy is on this branch — walk over and collect it first.'); return;
     }
-    this.breakBranch(this.standing);
+    this.breakBranch(this.standing); sfx.play('whack');
   }
 
   breakBranch(index: number) {
     if (this.state.destroyedBranches.includes(index)) return;
-    this.state.destroyedBranches.push(index); this.tone('chop');
+    this.state.destroyedBranches.push(index);
     const b = this.barriers[index];
     for (let i = 0; i < 9; i++) this.chips.push({
       x: this.p.x + (i - 4) * 11, y: b.y, vx: (i - 4) * 20, vy: -70 - i * 6, life: .5,
@@ -274,7 +250,7 @@ export class Level2 extends Phaser.Scene {
     this.elapsed += dt;
     this.cameras.main.setBackgroundColor(Phaser.Display.Color.HSLToColor((this.elapsed / 180) % 1, .38, .9).color);
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) {
-      this.scene.restart({ elapsed: this.elapsed, soundEnabled: this.soundEnabled }); return;
+      this.scene.restart({ elapsed: this.elapsed }); return;
     }
     if (this.state.completed) return;
     this.feedback = Math.max(0, this.feedback - dt);
@@ -310,7 +286,7 @@ export class Level2 extends Phaser.Scene {
       if (k.G.isDown && !this.hook && this.mode === 'outside' && this.launchRemaining <= 0) {
         const next = this.branches[this.state.checkpoint + 1];
         if (next && Math.hypot(next.x + next.w / 2 - p.x, next.y - 25 - p.y) < 240) {
-          this.hook = { x: next.x + next.w / 2, y: next.y - 25 };
+          this.hook = { x: next.x + next.w / 2, y: next.y - 25 }; sfx.grapple();
         }
       }
       if (!k.G.isDown) this.hook = undefined;
@@ -328,6 +304,7 @@ export class Level2 extends Phaser.Scene {
         if (this.mode === 'inside' && this.state.destroyedBranches.includes(i)) continue;
         const b = surfaces[i];
         if (p.vy >= 0 && oldY + 16 <= b.y + 5 && p.y + 16 >= b.y && p.x + 9 > b.x && p.x - 9 < b.x + b.w) {
+          if (p.vy > 60) sfx.play('land');
           p.y = b.y - 16; p.vy = 0; p.ground = true; this.standing = i;
           this.launchRemaining = 0;
           this.state.checkpoint = Math.max(this.state.checkpoint, i);
@@ -345,10 +322,10 @@ export class Level2 extends Phaser.Scene {
           if (b.stood > 20) this.breakBranch(i);
         });
         if (!this.state.axeCollected && Math.abs(p.x - 1800) < 26 && Math.abs(p.y - 184) < 32) {
-          this.state.axeCollected = true; this.tone('pickup'); this.message('Axe collected! Press F for one satisfying whack.');
+          this.state.axeCollected = true;  this.message('Axe collected! Press F for one satisfying whack.');
         }
         if (!this.state.trophyCollected && Math.abs(p.x - 2090) < 28 && Math.abs(p.y - 1264) < 32) {
-          this.state.trophyCollected = true; awardTrophy(this, 2); this.tone('pickup'); this.message('Trophy collected. The finish is just below!');
+          this.state.trophyCollected = true; awardTrophy(this, 2);  this.message('Trophy collected. The finish is just below!');
         }
         if (this.standing === 6 && this.state.trophyCollected) { this.complete(); return; }
         if (p.y > 1640) { this.fail(); return; }
@@ -400,6 +377,7 @@ export class Level2 extends Phaser.Scene {
     const p = this.p;
     g.save(); g.translateCanvas(p.x, p.y); g.rotateCanvas(p.rotation);
     const stride = p.ground ? Math.sin(this.elapsed * 15) * Math.min(Math.abs(p.vx) / 210, 1) * 3 : 2;
+    if (selectedCharacter(this) === 'banana') { drawBanana(g, stride); } else {
     g.lineStyle(7, 0x838786); g.lineBetween(-4, 6, -7 - stride, 16); g.lineBetween(4, 6, 7 + stride, 16);
     this.wood(g, -7, -12, 14, 20, 0x858b88);
     g.lineStyle(5, 0x858b88); g.lineBetween(-7, -8, -15, -5); g.lineBetween(7, -8, 15, -5);
@@ -410,6 +388,7 @@ export class Level2 extends Phaser.Scene {
     g.lineStyle(1.2, INK); g.strokePoints([{ x: -11, y: -23 }, { x: -6, y: -25 }, { x: -2, y: -21 }, { x: 3, y: -25 }, { x: 7, y: -22 }, { x: 11, y: -24 }]);
     g.lineBetween(-6, -28, -6, -25); g.lineBetween(6, -28, 6, -25); g.lineBetween(-3, -16, 3, -16);
     g.fillStyle(0xc68e67); g.fillRect(-8, 3, 16, 4); g.lineStyle(1, INK); g.strokeRect(-3, 2, 6, 6); g.lineBetween(0, -8, 0, -2);
+    }
     if (this.state.axeCollected) this.axe(g, p.face * 18, -5, this.swing > 0 ? -1.1 + (1 - this.swing / .27) * 2.8 : .25);
     g.restore();
   }

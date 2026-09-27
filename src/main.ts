@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import './style.css';
+import { sfx } from './sound';
+import { CharacterSelect, selectedCharacter, drawBanana } from './character';
 import { Level2 } from './level2';
 import { Level3, ChooseLevel, Ending } from './level3';
 import { awardTrophy } from './trophies';
@@ -26,15 +28,15 @@ class Level extends Phaser.Scene {
   elapsed=0; fireAt=0; immune=0; coyote=0; jumpBuffer=0; bounceLock=0;
   trapNext:number[]=[];
   trapXs=[170,275,390,505,630,755,870,970];
-  audio?:AudioContext;
-  soundEnabled=false;
+
+
   constructor(){super('level');}
   create(){
     document.querySelector('h1 small')!.textContent = 'Level 1';
     document.title = 'Puzzle Maker — Owen’s Level 1';
     document.querySelector('footer')!.innerHTML = '<span><b>A D / ← →</b> move · <b>W S / ↑ ↓</b> ladders · <b>Space</b> jump · <b>F</b> bow · <b>G</b> hold to grapple</span><span>Click to aim & shoot · <b>R</b> restart</span>';
     document.querySelector('#game')!.setAttribute('aria-label', 'Puzzle Maker Level 1. Arrows or WASD to move, Space to jump, F to shoot, G to grapple.');
-    this.soundEnabled = document.querySelector('#sound')?.getAttribute('aria-pressed') === 'true';
+    this.events.once('shutdown', () => sfx.stopAll());
     this.state={targetsHit:0,targetSectionComplete:false,trophyCollected:false,trapsActive:true,bottomLadderUnlocked:false,completed:false};
     this.p={x:65,y:226,vx:0,vy:0,ground:true,face:1};this.area=0;this.elapsed=0;this.fireAt=0;this.immune=0;this.coyote=0;this.jumpBuffer=0;this.bounceLock=0;this.hook=undefined;this.shots=[];
     this.targets=[{x:165,y:173},{x:205,y:105},{x:438,y:188},{x:474,y:106},{x:739,y:117},{x:983,y:133}].map(t=>({...t,hit:false,flash:0}));
@@ -49,8 +51,6 @@ class Level extends Phaser.Scene {
     this.hud=this.label(1170,20,'',15).setOrigin(1,0);
     this.note=this.label(600,742,'',14).setOrigin(.5,1);
     this.input.on('pointerdown',(pointer:Phaser.Input.Pointer)=>{if(!this.state.completed)this.shoot(pointer.worldX,pointer.worldY);});
-    const soundButton=document.querySelector<HTMLButtonElement>('#sound')!;
-    soundButton.onclick=()=>{this.soundEnabled=!this.soundEnabled;soundButton.textContent=this.soundEnabled?'Sound on':'Sound off';soundButton.setAttribute('aria-pressed',String(this.soundEnabled));if(this.soundEnabled)this.tone('hit');};
     this.drawWorld();this.message();
   }
   label(x:number,y:number,text:string,size:number){return this.add.text(x,y,text,{fontFamily:'Comic Sans MS, Trebuchet MS, cursive',fontSize:size,color:'#51483f'});}
@@ -80,12 +80,8 @@ class Level extends Phaser.Scene {
     this.hud.setText(this.area===0?`${this.state.targetsHit} / 6 targets` : this.state.trophyCollected?'Trophy collected ✓':'Trophy ←');
     this.note.setText(custom??(this.area===0?(this.state.targetSectionComplete?'All six! Head right →  then hold ↓ on the ladder.':'Walk across the top. Hold F to aim at nearby targets and shoot.') : this.area===1?(this.state.trophyCollected?'The arrows have stopped. Return right →  and climb down.':'← Collect the trophy. Watch the ceiling: a glow means an arrow is coming.'):'← Orange · yellow ladder · spinning green · blue · slime · finish'));
   }
-  tone(kind:'hit'|'mechanism'|'bounce'){
-    if(!this.soundEnabled)return;
-    try{this.audio??=new AudioContext();void this.audio.resume();const a=this.audio,t=a.currentTime;for(let i=0;i<(kind==='mechanism'?3:1);i++){const o=a.createOscillator(),v=a.createGain();o.type=kind==='mechanism'?'sawtooth':'sine';o.frequency.setValueAtTime(kind==='mechanism'?150-i*30:kind==='bounce'?220:650,t+i*.075);o.frequency.exponentialRampToValueAtTime(kind==='bounce'?660:65,t+i*.075+.13);v.gain.setValueAtTime(.045,t+i*.075);v.gain.exponentialRampToValueAtTime(.001,t+i*.075+.16);o.connect(v);v.connect(a.destination);o.start(t+i*.075);o.stop(t+i*.075+.17);}}catch{/* Sound is optional when browser audio is unavailable. */}
-  }
   shoot(aimX?:number,aimY?:number){
-    if(this.elapsed<this.fireAt)return;this.fireAt=this.elapsed+.32;
+    if(this.elapsed<this.fireAt)return;this.fireAt=this.elapsed+.32;sfx.play('arrow');
     const p=this.p;let dx=p.face,dy=0;
     if(aimX!==undefined&&aimY!==undefined){dx=aimX-p.x;dy=aimY-(p.y-15);}else if(this.area===0){const t=this.targets.filter(t=>!t.hit).sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y))[0];if(t){dx=t.x-p.x;dy=t.y-(p.y-15);}}
     const length=Math.hypot(dx,dy)||1;this.shots.push({x:p.x,y:p.y-15,vx:dx/length*600,vy:dy/length*600,enemy:false});
@@ -100,7 +96,7 @@ class Level extends Phaser.Scene {
     if(k.F.isDown)this.shoot();
     if(Phaser.Input.Keyboard.JustDown(k.SPACE))this.jumpBuffer=.13;else this.jumpBuffer-=dt;
     if(p.ground)this.coyote=.1;else this.coyote-=dt;
-    let climbing=false;
+    const climbY=p.y; let climbing=false;
     if(Math.abs(p.x-1100)<28&&(up||down)){
       if(this.area===0&&this.state.targetSectionComplete&&down){this.area=1;p.y=290;p.ground=false;this.hook=undefined;this.trapNext=this.trapXs.map((_,i)=>this.elapsed+1.4+(i%3)*.8);this.message();}
       if(this.area===1&&p.y>=407&&down&&this.state.bottomLadderUnlocked){this.area=2;p.y=455;p.ground=false;this.hook=undefined;this.message();}
@@ -111,24 +107,25 @@ class Level extends Phaser.Scene {
     if(this.bounceLock===0)p.vx=(Number(right)-Number(left))*210;
     if(left||right)p.face=right?1:-1;
     if(this.jumpBuffer>0&&(this.coyote>0||climbing)){p.vy=-390;p.ground=false;climbing=false;this.jumpBuffer=0;this.coyote=0;}
-    if(k.G.isDown&&!this.hook&&this.area===2){const candidates=this.platforms.filter(s=>s.kind!=='finish'&&s.x+s.w/2<p.x-20&&Math.hypot(s.x+s.w/2-p.x,s.y-25-p.y)<230);const s=candidates.sort((a,b)=>b.x-a.x)[0];if(s)this.hook={x:s.x+s.w/2,y:s.y-24};}
+    if(k.G.isDown&&!this.hook&&this.area===2){const candidates=this.platforms.filter(s=>s.kind!=='finish'&&s.x+s.w/2<p.x-20&&Math.hypot(s.x+s.w/2-p.x,s.y-25-p.y)<230);const s=candidates.sort((a,b)=>b.x-a.x)[0];if(s){this.hook={x:s.x+s.w/2,y:s.y-24};sfx.grapple();}}
     if(!k.G.isDown)this.hook=undefined;
     if(this.hook){const dx=this.hook.x-p.x,dy=this.hook.y-p.y,len=Math.hypot(dx,dy);if(len>18){p.vx=dx/len*250;p.vy=dy/len*250;p.ground=false;}else this.hook=undefined;}
     const oldY=p.y;
     if(!climbing){if(!this.hook)p.vy+=980*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.ground=false;
       const surfaces=this.area===0?[{x:20,y:240,w:1160}]:this.area===1?[{x:20,y:430,w:1160}]:this.platforms;
-      for(const s of surfaces){if(p.vy>=0&&oldY+16<=s.y+5&&p.y+16>=s.y&&p.x+10>s.x&&p.x-10<s.x+s.w){p.y=s.y-16;p.vy=0;p.ground=true;
-        if('kind'in s&&s.kind==='slime'){p.vy=-455;p.vx=-210;p.ground=false;this.bounceLock=.6;this.tone('bounce');}
+      for(const s of surfaces){if(p.vy>=0&&oldY+16<=s.y+5&&p.y+16>=s.y&&p.x+10>s.x&&p.x-10<s.x+s.w){if(p.vy>60)sfx.play('land');p.y=s.y-16;p.vy=0;p.ground=true;
+        if('kind'in s&&s.kind==='slime'){p.vy=-455;p.vx=-210;p.ground=false;this.bounceLock=.6;sfx.play('boing');}
         if('kind'in s&&s.kind==='finish'&&this.state.trophyCollected){this.complete();return;}break;}}
     }else{p.x+=p.vx*dt;}
+    if(climbing&&p.y!==climbY)sfx.play('step');
     p.x=Phaser.Math.Clamp(p.x,32,1168);if(this.area===0)p.y=Math.max(p.y,75);if(this.area===1)p.y=Math.max(p.y,290);
     if(this.area===2&&p.y>760)this.resetToEntrance();
-    if(this.area===1&&!this.state.trophyCollected&&p.x<106&&p.y>380){this.state.trophyCollected=true;awardTrophy(this,1);this.state.trapsActive=false;this.state.bottomLadderUnlocked=true;this.shots=this.shots.filter(s=>!s.enemy);this.tone('mechanism');this.drawWorld();this.message();}
+    if(this.area===1&&!this.state.trophyCollected&&p.x<106&&p.y>380){this.state.trophyCollected=true;awardTrophy(this,1);this.state.trapsActive=false;this.state.bottomLadderUnlocked=true;this.shots=this.shots.filter(s=>!s.enemy);this.drawWorld();this.message();}
     if(this.area===1&&this.state.trapsActive){this.trapXs.forEach((x,i)=>{if(this.elapsed>=this.trapNext[i]){this.shots.push({x,y:294,vx:0,vy:220,enemy:true});this.trapNext[i]=this.elapsed+2.65;}});}
     this.shots=this.shots.filter(s=>{
       s.x+=s.vx*dt;s.y+=s.vy*dt;
-      if(s.enemy){if(this.area===1&&this.immune===0&&Math.abs(s.x-p.x)<17&&Math.abs(s.y-p.y)<27){this.resetToEntrance();return false;}return s.y<424;}
-      if(this.area===0){for(const t of this.targets){if(!t.hit&&Math.abs(t.x-s.x)<28&&Math.abs(t.y-s.y)<27){t.hit=true;t.flash=this.elapsed;this.state.targetsHit++;this.tone('hit');if(this.state.targetsHit===6){this.state.targetSectionComplete=true;this.drawWorld();}this.message();return false;}}}
+      if(s.enemy){if(this.area===1&&this.immune===0&&Math.abs(s.x-p.x)<17&&Math.abs(s.y-p.y)<27){this.resetToEntrance();return false;}if(s.y>=424)sfx.play('clang');return s.y<424;}
+      if(this.area===0){for(const t of this.targets){if(!t.hit&&Math.abs(t.x-s.x)<28&&Math.abs(t.y-s.y)<27){t.hit=true;t.flash=this.elapsed;this.state.targetsHit++;sfx.play('ding');if(this.state.targetsHit===6){this.state.targetSectionComplete=true;this.drawWorld();}this.message();return false;}}}
       return s.x>0&&s.x<1200&&s.y>40&&s.y<(this.area===0?240:this.area===1?430:720);
     });
     this.drawMoving();
@@ -143,19 +140,22 @@ class Level extends Phaser.Scene {
     if(this.hook){g.lineStyle(1.5,INK);g.lineBetween(this.p.x,this.p.y-8,this.hook.x,this.hook.y);g.strokeCircle(this.hook.x,this.hook.y,5);}
     const p=this.p;if(this.immune>0&&Math.floor(this.elapsed*12)%2===0)return;
     g.save();g.translateCanvas(p.x,p.y);const stride=p.ground?Math.sin(this.elapsed*15)*Math.min(Math.abs(p.vx)/210,1)*3:2;
+    if(selectedCharacter(this)==='banana'){drawBanana(g,stride);}else{
     g.lineStyle(7,0x838786);g.lineBetween(-4,6,-7-stride,16);g.lineBetween(4,6,7+stride,16);this.box(g,-7,-12,14,20,0x858b88);g.lineStyle(5,0x858b88);g.lineBetween(-7,-8,-15,-5);g.lineBetween(7,-8,15,-5);g.fillStyle(0xe19a74);g.fillRect(-18,-8,5,6);g.fillRect(13,-8,5,6);
     g.fillStyle(0xdf916f);g.fillEllipse(0,-23,25,28);g.lineStyle(1.5,INK);g.strokeEllipse(0,-23,25,28);g.fillStyle(0xf0be9a);g.fillRect(-11,-29,22,7);g.lineStyle(1.2,INK);g.strokePoints([{x:-11,y:-23},{x:-6,y:-25},{x:-2,y:-21},{x:3,y:-25},{x:7,y:-22},{x:11,y:-24}]);g.lineBetween(-6,-28,-6,-25);g.lineBetween(6,-28,6,-25);g.lineBetween(-3,-16,3,-16);g.fillStyle(0xc68e67);g.fillRect(-8,3,16,4);g.lineStyle(1,INK);g.strokeRect(-3,2,6,6);g.lineBetween(0,-8,0,-2);
+    }
     g.lineStyle(2,0x8a602f);g.beginPath();g.arc(p.face*17,-8,12,-Math.PI/2,Math.PI/2,p.face<0);g.strokePath();g.lineStyle(1,0xe9ddbd);g.lineBetween(p.face*17,-20,p.face*17,4);g.restore();
   }
   complete(){
     this.state.completed=true; this.hook=undefined; this.shots=[];
-    this.scene.start('level2', { elapsed: this.elapsed, soundEnabled: this.soundEnabled });
+    this.scene.start('level2', { elapsed: this.elapsed });
   }
 }
 
+sfx.init();
 const requested = new URLSearchParams(window.location.search).get('level');
-const first = requested === '2' ? Level2 : requested === '3' ? Level3 : requested === 'menu' ? ChooseLevel : Level;
-const scenes = [first, ...[Level,Level2,Level3,ChooseLevel,Ending].filter(scene => scene !== first)];
+const first = requested === '2' ? Level2 : requested === '3' ? Level3 : requested === 'menu' ? ChooseLevel : requested === '1' ? Level : CharacterSelect;
+const scenes = [first, ...[Level,Level2,Level3,ChooseLevel,Ending,CharacterSelect].filter(scene => scene !== first)];
 const game=new Phaser.Game({type:Phaser.AUTO,parent:'game',width:1200,height:760,backgroundColor:'#f0e9df',antialias:true,scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},scene:scenes,audio:{noAudio:true}});
 // Read-only state access for lightweight browser smoke checks; no debug UI or assets.
 Object.defineProperty(window,'puzzleMaker',{value:game});
