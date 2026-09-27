@@ -1,5 +1,8 @@
 import Phaser from 'phaser';
 import './style.css';
+import { Level2 } from './level2';
+import { Level3, ChooseLevel, Ending } from './level3';
+import { awardTrophy } from './trophies';
 
 const INK = 0x51483f;
 type Platform = { x:number; y:number; w:number; h:number; color:number; kind?:string };
@@ -27,6 +30,11 @@ class Level extends Phaser.Scene {
   soundEnabled=false;
   constructor(){super('level');}
   create(){
+    document.querySelector('h1 small')!.textContent = 'Level 1';
+    document.title = 'Puzzle Maker — Owen’s Level 1';
+    document.querySelector('footer')!.innerHTML = '<span><b>A D / ← →</b> move · <b>W S / ↑ ↓</b> ladders · <b>Space</b> jump · <b>F</b> bow · <b>G</b> hold to grapple</span><span>Click to aim & shoot · <b>R</b> restart</span>';
+    document.querySelector('#game')!.setAttribute('aria-label', 'Puzzle Maker Level 1. Arrows or WASD to move, Space to jump, F to shoot, G to grapple.');
+    this.soundEnabled = document.querySelector('#sound')?.getAttribute('aria-pressed') === 'true';
     this.state={targetsHit:0,targetSectionComplete:false,trophyCollected:false,trapsActive:true,bottomLadderUnlocked:false,completed:false};
     this.p={x:65,y:226,vx:0,vy:0,ground:true,face:1};this.area=0;this.elapsed=0;this.fireAt=0;this.immune=0;this.coyote=0;this.jumpBuffer=0;this.bounceLock=0;this.hook=undefined;this.shots=[];
     this.targets=[{x:165,y:173},{x:205,y:105},{x:438,y:188},{x:474,y:106},{x:739,y:117},{x:983,y:133}].map(t=>({...t,hit:false,flash:0}));
@@ -115,7 +123,7 @@ class Level extends Phaser.Scene {
     }else{p.x+=p.vx*dt;}
     p.x=Phaser.Math.Clamp(p.x,32,1168);if(this.area===0)p.y=Math.max(p.y,75);if(this.area===1)p.y=Math.max(p.y,290);
     if(this.area===2&&p.y>760)this.resetToEntrance();
-    if(this.area===1&&!this.state.trophyCollected&&p.x<106&&p.y>380){this.state.trophyCollected=true;this.state.trapsActive=false;this.state.bottomLadderUnlocked=true;this.shots=this.shots.filter(s=>!s.enemy);this.tone('mechanism');this.drawWorld();this.message();}
+    if(this.area===1&&!this.state.trophyCollected&&p.x<106&&p.y>380){this.state.trophyCollected=true;awardTrophy(this,1);this.state.trapsActive=false;this.state.bottomLadderUnlocked=true;this.shots=this.shots.filter(s=>!s.enemy);this.tone('mechanism');this.drawWorld();this.message();}
     if(this.area===1&&this.state.trapsActive){this.trapXs.forEach((x,i)=>{if(this.elapsed>=this.trapNext[i]){this.shots.push({x,y:294,vx:0,vy:220,enemy:true});this.trapNext[i]=this.elapsed+2.65;}});}
     this.shots=this.shots.filter(s=>{
       s.x+=s.vx*dt;s.y+=s.vy*dt;
@@ -139,9 +147,20 @@ class Level extends Phaser.Scene {
     g.fillStyle(0xdf916f);g.fillEllipse(0,-23,25,28);g.lineStyle(1.5,INK);g.strokeEllipse(0,-23,25,28);g.fillStyle(0xf0be9a);g.fillRect(-11,-29,22,7);g.lineStyle(1.2,INK);g.strokePoints([{x:-11,y:-23},{x:-6,y:-25},{x:-2,y:-21},{x:3,y:-25},{x:7,y:-22},{x:11,y:-24}]);g.lineBetween(-6,-28,-6,-25);g.lineBetween(6,-28,6,-25);g.lineBetween(-3,-16,3,-16);g.fillStyle(0xc68e67);g.fillRect(-8,3,16,4);g.lineStyle(1,INK);g.strokeRect(-3,2,6,6);g.lineBetween(0,-8,0,-2);
     g.lineStyle(2,0x8a602f);g.beginPath();g.arc(p.face*17,-8,12,-Math.PI/2,Math.PI/2,p.face<0);g.strokePath();g.lineStyle(1,0xe9ddbd);g.lineBetween(p.face*17,-20,p.face*17,4);g.restore();
   }
-  complete(){this.state.completed=true;this.hook=undefined;this.shots=[];this.add.rectangle(600,380,1200,760,0xf4efdf,.96);this.label(600,315,'Level 2 — Coming Next',36).setOrigin(.5);this.label(600,372,'Level 1 complete. Thanks for playing Owen’s game.',17).setOrigin(.5);const button=this.label(600,438,'↻  Restart Level 1',22).setOrigin(.5).setPadding(18,10).setBackgroundColor('#e1d9c5').setInteractive({useHandCursor:true});button.on('pointerdown',()=>this.scene.restart());this.label(600,493,'or press R',13).setOrigin(.5);}
+  complete(){
+    this.state.completed=true; this.hook=undefined; this.shots=[];
+    this.scene.start('level2', { elapsed: this.elapsed, soundEnabled: this.soundEnabled });
+  }
 }
 
-const game=new Phaser.Game({type:Phaser.AUTO,parent:'game',width:1200,height:760,backgroundColor:'#f0e9df',antialias:true,scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},scene:[Level],audio:{noAudio:true}});
+const requested = new URLSearchParams(window.location.search).get('level');
+const first = requested === '2' ? Level2 : requested === '3' ? Level3 : requested === 'menu' ? ChooseLevel : Level;
+const scenes = [first, ...[Level,Level2,Level3,ChooseLevel,Ending].filter(scene => scene !== first)];
+const game=new Phaser.Game({type:Phaser.AUTO,parent:'game',width:1200,height:760,backgroundColor:'#f0e9df',antialias:true,scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},scene:scenes,audio:{noAudio:true}});
 // Read-only state access for lightweight browser smoke checks; no debug UI or assets.
 Object.defineProperty(window,'puzzleMaker',{value:game});
+
+document.querySelector<HTMLButtonElement>('#levels')!.onclick = () => {
+  const active = game.scene.getScenes(true)[0] as Phaser.Scene & { elapsed?: number };
+  if (active) active.scene.start('levels', { elapsed: active.elapsed ?? 0 });
+};
